@@ -7,13 +7,19 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/bregydoc/gtranslate"
 )
 
-var foldersName *string
-var languageFrom *string
-var languageTo *string
+var (
+	foldersName  *string
+	languageFrom *string
+	languageTo   *string
+	wg           sync.WaitGroup
+	mu           sync.Mutex
+	sem          chan struct{} // 信号量，用于限制并发数
+)
 
 type Googlelanguage struct {
 	from string
@@ -21,12 +27,13 @@ type Googlelanguage struct {
 }
 
 func charTranslation(glanguage *Googlelanguage, filePath string) {
+	defer wg.Done()
 
 	// Read the file contents
-	// filePath := "test.go" // Replace with your file path
 	content, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		fmt.Printf("[-] %s Translation failed: %v \n", filePath, err)
+		return
 	}
 
 	// Regular expression matches Chinese characters
@@ -39,8 +46,6 @@ func charTranslation(glanguage *Googlelanguage, filePath string) {
 		translated, err := gtranslate.TranslateWithParams(
 			text,
 			gtranslate.TranslationParams{
-				// From: "auto",
-				// To:   "en",
 				From: glanguage.from,
 				To:   glanguage.to,
 			},
@@ -51,7 +56,6 @@ func charTranslation(glanguage *Googlelanguage, filePath string) {
 		} else {
 			translatedTexts[i] = translated
 		}
-
 	}
 
 	// Replace the Chinese in the file with the translated English
@@ -64,15 +68,14 @@ func charTranslation(glanguage *Googlelanguage, filePath string) {
 	err = ioutil.WriteFile(filePath, []byte(translatedContent), 0644)
 	if err != nil {
 		fmt.Printf("[-] %s Translation failed: %v \n", filePath, err)
+		return
 	}
 
 	fmt.Printf("[>] translation of %s has been completed and the language in the document has been replaced.\n", filePath)
-
 }
 
 // GetDirAllFilePaths gets all the file paths in the specified directory recursively.
 func GetDirAllFilePaths(dirname string) ([]string, error) {
-	// Remove the trailing path separator if dirname has.
 	dirname = strings.TrimSuffix(dirname, string(os.PathSeparator))
 
 	infos, err := ioutil.ReadDir(dirname)
@@ -98,38 +101,22 @@ func GetDirAllFilePaths(dirname string) ([]string, error) {
 
 func LogFlag() {
 	fmt.Println(`
-	
-                      ███
-                    ███
-                   ██
-                  ██
-                 ███
-        █████████████████████
-     ███████████████████████████
-   ███████████████ ███████████████
- ██████████ ██████ ██████ █████████
- █████████   █████ █████   █████████
-█████████     ████ ████     ████████
-████████       ███ ███       ████████
-██████████████████ ██████████████████
-█████████████████   █████████████████
-████████   ████████████████  ████████
- ███████                     ███████
-  ████████                 ████████
-   ██████████████████████████████
-    ███████████████████████████                  @whale-baby
 
+	 _                       _       _       
+	| |                     | |     | |      
+	| |_ _ __ __ _ _ __  ___| | __ _| |_ ___ 
+	| __| '__/ _' | '_ \/ __| |/ _' | __/ _ \
+	| |_| | | \_| | | | \__ \ | \_| | ||  __/
+	 \__|_|  \__,_|_| |_|___/_|\__,_|\__\___|      @whale-baby
 	
 	
 	`)
 }
 
 func init() {
-
 	foldersName = flag.String("folders", "", "Folder Name")
 	languageFrom = flag.String("lfrom", "auto", "Source file language (\"auto\" Automatic identification)")
 	languageTo = flag.String("lto", "en", "Language to translate")
-
 }
 
 func main() {
@@ -138,32 +125,37 @@ func main() {
 	LogFlag()
 
 	if *foldersName != "" {
-
 		var glanguage Googlelanguage
-
-		//Set language
 		glanguage.from = *languageFrom
 		glanguage.to = *languageTo
 
-		//recurse file directory
+		// Set the maximum number of concurrent goroutines (e.g., 10)
+		maxConcurrency := 10
+		sem = make(chan struct{}, maxConcurrency)
+
+		// Recurse file directory
 		fileAll, err := GetDirAllFilePaths(*foldersName)
 		if err != nil {
 			fmt.Printf("[-] Failed to recurse file directory %v \n", err)
 			return
 		}
 
+		// Process files concurrently with semaphore
 		for _, path := range fileAll {
-
-			charTranslation(&glanguage, path)
-
+			wg.Add(1)
+			go func(path string) {
+				defer wg.Done()
+				sem <- struct{}{}        // Acquire a semaphore
+				defer func() { <-sem }() // Release the semaphore when done
+				charTranslation(&glanguage, path)
+			}(path)
 		}
 
+		// Wait for all goroutines to complete
+		wg.Wait()
+
 		fmt.Println("[+] Mission successfully completed")
-
 	} else {
-
 		fmt.Println("[-] Enter the name of the folder to be translated")
-
 	}
-
 }
