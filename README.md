@@ -54,7 +54,7 @@ go build main.go
 
 **2. 翻译限制：** Google Translate API 有每日调用次数限制，请合理使用。
 
-##Contribution
+## Contribution
 
 欢迎贡献代码或提出改进建议！请按照以下步骤提交贡献：
 
